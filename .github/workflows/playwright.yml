@@ -1,0 +1,183 @@
+name: Playwright Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Nightly regression run at 02:00 UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      test_suite:
+        description: "Which suite to run"
+        required: false
+        default: "all"
+        type: choice
+        options: [all, ui, api, visual, smoke]
+      browser:
+        description: "Browser to test"
+        required: false
+        default: "chromium"
+        type: choice
+        options: [chromium, firefox, webkit]
+
+env:
+  BASE_URL: ${{ secrets.BASE_URL }}
+  API_BASE_URL: ${{ secrets.API_BASE_URL }}
+  TEST_USERNAME: ${{ secrets.TEST_USERNAME }}
+  TEST_PASSWORD: ${{ secrets.TEST_PASSWORD }}
+
+jobs:
+  # ── Unit / API Tests (no browser, fast) ─────────────────────────────────────
+  api-tests:
+    name: API Tests
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      inputs.test_suite == 'all' ||
+      inputs.test_suite == 'api'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run API tests
+        run: |
+          pytest tests/api/ \
+            -m api \
+            --html=reports/api_report.html \
+            --self-contained-html \
+            -v
+
+      - name: Upload API report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: api-test-report
+          path: reports/api_report.html
+          retention-days: 14
+
+  # ── UI + Visual Tests ────────────────────────────────────────────────────────
+  ui-tests:
+    name: UI Tests (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      inputs.test_suite == 'all' ||
+      inputs.test_suite == 'ui' ||
+      inputs.test_suite == 'visual'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Download visual baselines (if any)
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: visual-baselines
+          path: screenshots/baseline
+
+      - name: Run UI tests
+        run: |
+          pytest tests/ui/ \
+            -m "ui and not visual" \
+            --browser-type=${{ matrix.browser }} \
+            --headless \
+            --html=reports/ui_report_${{ matrix.browser }}.html \
+            --self-contained-html \
+            -v
+        env:
+          SCREENSHOT_ON_FAILURE: "true"
+
+      - name: Run Visual tests (chromium only for baselines)
+        if: matrix.browser == 'chromium'
+        run: |
+          pytest tests/visual/ \
+            -m visual \
+            --browser-type=chromium \
+            --headless \
+            --html=reports/visual_report.html \
+            --self-contained-html \
+            -v
+
+      - name: Save updated baselines
+        if: matrix.browser == 'chromium'
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-baselines
+          path: screenshots/baseline
+          retention-days: 30
+
+      - name: Upload reports & screenshots
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-report-${{ matrix.browser }}
+          path: |
+            reports/
+            screenshots/
+          retention-days: 14
+
+  # ── Smoke Tests (on every PR, runs fast) ────────────────────────────────────
+  smoke-tests:
+    name: Smoke Tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || inputs.test_suite == 'smoke'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Chromium
+        run: playwright install --with-deps chromium
+
+      - name: Run smoke tests
+        run: |
+          pytest -m smoke \
+            --browser-type=chromium \
+            --headless \
+            --html=reports/smoke_report.html \
+            --self-contained-html \
+            -v
+
+      - name: Upload smoke report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-report
+          path: reports/smoke_report.html
+          retention-days: 7
