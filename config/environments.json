@@ -1,0 +1,62 @@
+{
+  "internal": {
+    "base_url": "http://wks1103/signin",
+    "api_base_url": "http://wks1103:8080/externalUrlNew",
+    "username": "yashashreek@linecraft.ai",
+    "password": "LineCraft@12345",
+    "company": "BKT_1",
+    "plant": "BKT_Plant",
+    "line": "GOTR_3_Line_Sanity_checks",
+    "api_endpoints": {
+      "get_assetwise_kpi": "http://wks1103:8080/externalUrlNew/get_assetwise_kpi",
+      "get_overview_jph_timeseries": "http://wks1103:8080/externalUrlNew/get_overview_jph_timeseries",
+      "get_production_schedule_graph": "http://wks1103:8080/externalUrlNew/get_production_schedule_graph",
+      "get_subassemblies_list": "http://wks1103:8080/externalUrlNew/get_subassemblies_list"
+    },
+    "expected_values": {
+      "config_id": "40316",
+      "node_ids": "[26024]",
+      "is_daywise": "false"
+    }
+  },
+  "production": {
+    "base_url": "https://app.linecraft.ai",
+    "api_base_url": "https://app.linecraft.ai/backend/externalUrlNew",
+    "username": "mithuls@linecraft.ai",
+    "password": "Line#Craft@123MS",
+    "company": "BKT",
+    "plant": "Bhuj",
+    "line": "TBM_GOTR_2",
+    "api_endpoints": {
+      "get_assetwise_kpi": "https://app.linecraft.ai/backend/externalUrlNew/get_assetwise_kpi",
+      "get_overview_jph_timeseries": "https://api.linecraft.ai/externalUrlNew/get_overview_jph_timeseries",
+      "get_production_schedule_graph": "https://api.linecraft.ai/externalUrlNew/get_production_schedule_graph",
+      "get_subassemblies_list": "https://api.linecraft.ai/externalUrlNew/get_subassemblies_list"
+    },
+    "expected_values": {
+      "config_id": "40316",
+      "node_ids": "[26024]",
+      "is_daywise": "false"
+    }
+  },
+  "staging": {
+    "base_url": "https://staging.linecraft.ai",
+    "api_base_url": "https://staging-api.linecraft.ai/externalUrlNew",
+    "username": "staging-email@linecraft.ai",
+    "password": "StagingPassword123",
+    "company": "Stellantis",
+    "plant": "PRT84",
+    "line": "GT_Line",
+    "api_endpoints": {
+      "get_assetwise_kpi": "https://staging-api.linecraft.ai/externalUrlNew/get_assetwise_kpi",
+      "get_overview_jph_timeseries": "https://staging-api.linecraft.ai/externalUrlNew/get_overview_jph_timeseries",
+      "get_production_schedule_graph": "https://staging-api.linecraft.ai/externalUrlNew/get_production_schedule_graph",
+      "get_subassemblies_list": "https://staging-api.linecraft.ai/externalUrlNew/get_subassemblies_list"
+    },
+    "expected_values": {
+      "config_id": "12345",
+      "node_ids": "[99001]",
+      "is_daywise": "false"
+    }
+  }
+}

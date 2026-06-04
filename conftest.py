@@ -1,144 +1,78 @@
 """
-conftest.py — Central Playwright + pytest fixture hub.
-All shared fixtures live here; test files just declare what they need.
+conftest.py — Auto-detects environment and loads flexible test data.
+Works with config/environments.json for multi-environment testing.
 """
 
-from __future__ import annotations
-
-import os
+import json
 import pytest
-from pathlib import Path
 from dotenv import load_dotenv
-from playwright.sync_api import Browser, BrowserContext, Page
 
-# ── Load .env ─────────────────────────────────────────────────────────────────
-load_dotenv()
-
-# ── Paths ─────────────────────────────────────────────────────────────────────
-ROOT = Path(__file__).parent
-SCREENSHOTS_DIR = ROOT / "screenshots"
-BASELINE_DIR = SCREENSHOTS_DIR / "baseline"
-REPORTS_DIR = ROOT / "reports"
-
-for d in (SCREENSHOTS_DIR, BASELINE_DIR, REPORTS_DIR):
-    d.mkdir(parents=True, exist_ok=True)
+# Load base .env (non-sensitive settings only)
+load_dotenv(".env")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# pytest hooks
-# ══════════════════════════════════════════════════════════════════════════════
-
-def pytest_addoption(parser: pytest.Parser) -> None:
-    """Only add options NOT already registered by pytest-playwright."""
-    parser.addoption("--browser-type", default=os.getenv("BROWSER", "chromium"),
-                     choices=["chromium", "firefox", "webkit"])
-    parser.addoption("--slow-mo", type=int, default=int(os.getenv("SLOW_MO", "0")))
-
-
-def pytest_configure(config: pytest.Config) -> None:
-    config.addinivalue_line("markers", "ui: browser UI tests")
-    config.addinivalue_line("markers", "api: API tests without a browser")
-    config.addinivalue_line("markers", "visual: visual regression tests")
-
-
-@pytest.hookimpl(tryfirst=True, hookwrapper=True)
-def pytest_runtest_makereport(item, call):
-    """Attach a screenshot to the HTML report on failure."""
-    outcome = yield
-    report = outcome.get_result()
-
-    if report.when == "call" and report.failed:
-        page: Page | None = item.funcargs.get("page")
-        if page and os.getenv("SCREENSHOT_ON_FAILURE", "true").lower() == "true":
-            shot_path = SCREENSHOTS_DIR / f"FAIL_{item.name}.png"
-            page.screenshot(path=str(shot_path), full_page=True)
-            if hasattr(item, "extras"):
-                from pytest_html import extras as html_extras
-                item.extras.append(html_extras.image(str(shot_path)))
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Config fixtures
-# ══════════════════════════════════════════════════════════════════════════════
-
-@pytest.fixture(scope="session")
-def browser_type_name(request: pytest.FixtureRequest) -> str:
-    return request.config.getoption("--browser-type")
-
-
-@pytest.fixture(scope="session")
-def is_headless() -> bool:
-    return os.getenv("HEADLESS", "true").lower() == "true"
-
-
-@pytest.fixture(scope="session")
-def slow_mo(request: pytest.FixtureRequest) -> int:
-    return request.config.getoption("--slow-mo")
-
-
-@pytest.fixture(scope="session")
-def base_url(request: pytest.FixtureRequest) -> str:
-    """
-    pytest-playwright already registers --base-url.
-    We read it here; falls back to .env BASE_URL.
-    """
-    val = request.config.getoption("--base-url", default=None)
-    return val or os.getenv("BASE_URL", "https://your-app.com")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Context / Page fixtures  (function-scoped — fresh context per test)
-# ══════════════════════════════════════════════════════════════════════════════
-
-@pytest.fixture()
-def context(browser: Browser) -> BrowserContext:
-    """Fresh browser context per test."""
-    ctx = browser.new_context(
-        viewport={
-            "width": int(os.getenv("VIEWPORT_WIDTH", "1280")),
-            "height": int(os.getenv("VIEWPORT_HEIGHT", "720")),
-        },
+def pytest_addoption(parser):
+    """Add custom command-line options."""
+    parser.addoption(
+        "--env",
+        action="store",
+        default="auto",
+        help="Environment: internal, production, staging, or auto (detect from base_url)",
     )
-    ctx.set_default_timeout(int(os.getenv("DEFAULT_TIMEOUT", "30000")))
-    ctx.set_default_navigation_timeout(int(os.getenv("NAVIGATION_TIMEOUT", "60000")))
-    yield ctx
-    ctx.close()
 
 
-@pytest.fixture()
-def page(context: BrowserContext) -> Page:
-    """One page per test, inside its own context."""
-    p = context.new_page()
-    yield p
-    p.close()
+@pytest.fixture(scope="session")
+def config_data():
+    """Load environments.json with test data for each environment."""
+    with open("config/environments.json") as f:
+        return json.load(f)
 
 
-@pytest.fixture()
-def authenticated_page(page: Page, base_url: str) -> Page:
-    """
-    Page that is already logged in.
-    Replace the body with your real login flow.
-    """
-    page.goto(f"{base_url}/login")
-    page.fill("[data-testid='email']", os.getenv("TEST_USERNAME", ""))
-    page.fill("[data-testid='password']", os.getenv("TEST_PASSWORD", ""))
-    page.click("[data-testid='login-btn']")
-    page.wait_for_url(f"{base_url}/dashboard", timeout=15_000)
-    return page
+def detect_environment(base_url, config_data):
+    """Auto-detect environment from base_url."""
+    for env_name, env_config in config_data.items():
+        if env_config["base_url"] in base_url:
+            return env_name
+    return "internal"  # Default fallback
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# API fixture
-# ══════════════════════════════════════════════════════════════════════════════
+@pytest.fixture(scope="session")
+def environment(request, config_data):
+    """Determine which environment we're testing."""
+    env = request.config.getoption("--env")
+    base_url = request.config.getoption("--base-url")
 
-@pytest.fixture()
-def api_client():
-    """requests.Session wrapper pre-configured with API base URL."""
-    from utils.api_client import ApiClient
-    client = ApiClient(
-        base_url=os.getenv("API_BASE_URL", "https://api.your-app.com"),
-        username=os.getenv("TEST_USERNAME", ""),
-        password=os.getenv("TEST_PASSWORD", ""),
-    )
-    yield client
-    client.close()
+    if env == "auto":
+        env = detect_environment(base_url, config_data)
+
+    print(f"\n{'='*70}")
+    print(f"🌍 ENVIRONMENT: {env.upper()}")
+    print(f"🔗 URL: {base_url}")
+    print(f"{'='*70}\n")
+
+    return env
+
+
+@pytest.fixture(scope="session")
+def test_data(request, config_data, environment):
+    """Get test data (credentials, company, plant, line, APIs) for current environment."""
+    return config_data[environment]
+
+
+@pytest.fixture(scope="session")
+def browser_context_args(browser_context_args):
+    """Set browser context arguments."""
+    return {
+        **browser_context_args,
+        "viewport": {"width": 1280, "height": 720},
+    }
+
+
+def pytest_configure(config):
+    """Register custom markers."""
+    config.addinivalue_line("markers", "ui: UI / browser tests")
+    config.addinivalue_line("markers", "api: API tests")
+    config.addinivalue_line("markers", "visual: Visual regression tests")
+    config.addinivalue_line("markers", "smoke: Smoke tests (quick)")
+    config.addinivalue_line("markers", "regression: Full regression suite")
+    config.addinivalue_line("markers", "critical: Business-critical tests")

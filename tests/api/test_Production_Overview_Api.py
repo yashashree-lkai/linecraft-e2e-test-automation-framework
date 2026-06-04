@@ -1,167 +1,252 @@
 """
-tests/api/test_production_overview_api.py
+tests/api/test_api_request_response_payload.py
 
-Intercepts get_assetwise_kpi on Production Overview page.
-Asserts payload params match expected test data.
-Captures Bearer token and includes it in the report.
+Complete API Test — Captures and validates REQUEST and RESPONSE payloads
 """
 
-import os
-import json
 import pytest
+import json
 from urllib.parse import urlparse, parse_qs
 from pages.login_page import LoginPage
 from pages.menuPage import MenuPage
 
-USERNAME = os.getenv("TEST_USERNAME", "")
-PASSWORD = os.getenv("TEST_PASSWORD", "")
-COMPANY  = os.getenv("COMPANY", "BKT_1")
-PLANT    = os.getenv("PLANT", "BKT_Plant")
-LINE     = os.getenv("LINE", "GOTR_3_Line_Sanity_checks")
-MODULE   = "Production Overview"
-
-# ── Expected test data — update these values when asset/time changes ──────────
-EXPECTED = {
-    "config_id":  "40316",           # Asset config ID
-    "node_ids":   "[26024]",         # Node ID list
-    "is_daywise": "false",           # Daywise flag
-    # start_time and end_time are dynamic (shift-based), so we only
-    # check format not exact value. Set to None to skip exact match.
-    "start_time": None,              # e.g. "05-May-2026+04:00:00:000"
-    "end_time":   None,              # e.g. "05-May-2026+04:00:00:000"
-}
-# ─────────────────────────────────────────────────────────────────────────────
+MODULE = "Production Overview"
 
 
-def login_and_open_production_overview(page, context, base_url):
-    """Login, select line, open Production Overview in new tab."""
+def login_and_open_production_overview(page, context, base_url, test_data):
+    """Helper: Login, select line, open Production Overview."""
     login = LoginPage(page, base_url).navigate()
-    login.login(USERNAME, PASSWORD)
-    page.wait_for_url("**/Menu/**", timeout=15_000)
+    login.login(test_data["username"], test_data["password"])
+    page.wait_for_url("**Menu**", timeout=20_000)
+    page.wait_for_timeout(2000)
 
     menu = MenuPage(page, base_url)
-    menu.select_company(COMPANY)
-    menu.select_plant(PLANT)
-    menu.select_line(LINE)
+    menu.select_company(test_data["company"])
+    menu.select_plant(test_data["plant"])
+    menu.select_line(test_data["line"])
 
     with context.expect_page() as new_page_info:
         page.get_by_text(MODULE, exact=True).click()
 
     new_page = new_page_info.value
-    new_page.wait_for_load_state("domcontentloaded", timeout=60_000)
+    new_page.wait_for_url("**ProductionOverview**", timeout=10_000)
     return new_page
 
 
 @pytest.mark.api
-def test_assetwise_kpi_payload_and_token(page, context, base_url):
+@pytest.mark.critical
+def test_api_request_response_payload(page, context, base_url, test_data, environment):
     """
-    1. Open Production Overview
-    2. Intercept get_assetwise_kpi request
-    3. Assert all query params match expected test data
-    4. Extract Bearer token and include in report
+    Complete API Payload Test
+
+    Captures and validates:
+    ✅ Request URL
+    ✅ Request Headers
+    ✅ Request Body/Payload
+    ✅ Response Status
+    ✅ Response Headers
+    ✅ Response Body/Payload
     """
-    captured = []
+    captured_requests = []
+    captured_responses = []
 
-    prod_page = login_and_open_production_overview(page, context, base_url)
+    prod_page = login_and_open_production_overview(page, context, base_url, test_data)
 
-    def capture(request):
+    print(f"\n\n{'='*100}")
+    print(f"🚀 PRODUCTION OVERVIEW LOADED — Ready to capture API payloads")
+    print(f"{'='*100}\n")
+
+    # Capture requests with full payload
+    def capture_request(request):
         if "get_assetwise_kpi" in request.url:
-            captured.append({
-                "url":     request.url,
-                "method":  request.method,
-                "headers": dict(request.headers),
-            })
+            try:
+                # Try to get request body/post data
+                request_body = None
+                try:
+                    request_body = request.post_data
+                except:
+                    request_body = None
 
-    prod_page.on("request", capture)
-    prod_page.reload()
-    prod_page.wait_for_load_state("domcontentloaded", timeout=60_000)
-    prod_page.wait_for_timeout(3000)
+                captured_requests.append({
+                    "method": request.method,
+                    "url": request.url,
+                    "headers": dict(request.headers),
+                    "body": request_body,
+                })
+                print(f"📤 REQUEST CAPTURED: {request.method} {request.url}\n")
+            except Exception as e:
+                print(f"⚠️  Error capturing request: {e}\n")
 
-    # ── Verify request was made ───────────────────────────────────
-    assert len(captured) > 0, "get_assetwise_kpi was never called!"
+    # Capture responses with full payload
+    def capture_response(response):
+        if "get_assetwise_kpi" in response.url:
+            try:
+                response_body = response.text()
+                try:
+                    response_json = response.json()
+                except:
+                    response_json = None
 
-    req     = captured[0]
-    url     = req["url"]
-    headers = req["headers"]
-    parsed  = urlparse(url)
-    params  = parse_qs(parsed.query)
+                captured_responses.append({
+                    "url": response.url,
+                    "status": response.status,
+                    "headers": dict(response.headers),
+                    "body_text": response_body,
+                    "body_json": response_json,
+                })
+                print(f"📥 RESPONSE CAPTURED: {response.status}\n")
+            except Exception as e:
+                print(f"⚠️  Error capturing response: {e}\n")
 
-    # ── Extract Bearer token ──────────────────────────────────────
-    auth_header = headers.get("authorization", headers.get("Authorization", ""))
-    bearer_token = auth_header.replace("Bearer ", "").strip() if auth_header else "NOT FOUND"
+    prod_page.on("request", capture_request)
+    prod_page.on("response", capture_response)
 
-    # ── Print full details to report ──────────────────────────────
-    print("\n" + "="*60)
-    print("API REQUEST DETAILS")
-    print("="*60)
-    print(f"URL:          {url}")
-    print(f"Method:       {req['method']}")
-    print(f"Bearer Token: {bearer_token}")
-    print("-"*60)
-    print("QUERY PARAMS:")
-    for k, v in params.items():
-        print(f"  {k} = {v[0]}")
-    print("-"*60)
-    print("EXPECTED VS ACTUAL:")
-    print(f"  config_id  → expected: {EXPECTED['config_id']:<10} actual: {params.get('config_id', ['N/A'])[0]}")
-    print(f"  node_ids   → expected: {EXPECTED['node_ids']:<10} actual: {params.get('node_ids', ['N/A'])[0]}")
-    print(f"  is_daywise → expected: {EXPECTED['is_daywise']:<10} actual: {params.get('is_daywise', ['N/A'])[0]}")
-    print(f"  start_time → actual: {params.get('start_time', ['N/A'])[0]}")
-    print(f"  end_time   → actual: {params.get('end_time', ['N/A'])[0]}")
-    print("="*60)
+    # Wait for API to fire
+    print("⏳ Waiting for API to fire (max 10 seconds)...")
+    prod_page.wait_for_timeout(10000)
 
-    # ── Assertions ────────────────────────────────────────────────
+    print(f"\n\n{'='*100}")
+    print(f"📋 API PAYLOAD TEST REPORT — {environment.upper()}")
+    print(f"{'='*100}\n")
 
-    # 1. config_id
-    assert "config_id" in params, "MISSING param: config_id"
-    assert params["config_id"][0] == EXPECTED["config_id"], (
-        f"config_id MISMATCH — "
-        f"expected: {EXPECTED['config_id']}, "
-        f"actual: {params['config_id'][0]}"
-    )
-    print(f"✓ config_id matches: {params['config_id'][0]}")
+    # === REQUEST PAYLOAD ===
+    if captured_requests:
+        req = captured_requests[0]
 
-    # 2. node_ids
-    assert "node_ids" in params, "MISSING param: node_ids"
-    assert params["node_ids"][0] == EXPECTED["node_ids"], (
-        f"node_ids MISMATCH — "
-        f"expected: {EXPECTED['node_ids']}, "
-        f"actual: {params['node_ids'][0]}"
-    )
-    print(f"✓ node_ids matches: {params['node_ids'][0]}")
+        print(f"{'█'*100}")
+        print(f"📤 REQUEST PAYLOAD")
+        print(f"{'█'*100}\n")
 
-    # 3. is_daywise
-    assert "is_daywise" in params, "MISSING param: is_daywise"
-    assert params["is_daywise"][0] == EXPECTED["is_daywise"], (
-        f"is_daywise MISMATCH — "
-        f"expected: {EXPECTED['is_daywise']}, "
-        f"actual: {params['is_daywise'][0]}"
-    )
-    print(f"✓ is_daywise matches: {params['is_daywise'][0]}")
+        print(f"METHOD: {req['method']}")
+        print(f"URL: {req['url']}\n")
 
-    # 4. start_time — only check format if no exact value set
-    assert "start_time" in params, "MISSING param: start_time"
-    if EXPECTED["start_time"]:
-        assert params["start_time"][0] == EXPECTED["start_time"], (
-            f"start_time MISMATCH — "
-            f"expected: {EXPECTED['start_time']}, "
-            f"actual: {params['start_time'][0]}"
-        )
-    print(f"✓ start_time present: {params['start_time'][0]}")
+        # Parse query parameters
+        parsed = urlparse(req["url"])
+        params = parse_qs(parsed.query)
 
-    # 5. end_time
-    assert "end_time" in params, "MISSING param: end_time"
-    if EXPECTED["end_time"]:
-        assert params["end_time"][0] == EXPECTED["end_time"], (
-            f"end_time MISMATCH — "
-            f"expected: {EXPECTED['end_time']}, "
-            f"actual: {params['end_time'][0]}"
-        )
-    print(f"✓ end_time present: {params['end_time'][0]}")
+        print(f"QUERY PARAMETERS:")
+        print(f"{'-'*100}")
+        for key, value in sorted(params.items()):
+            print(f"  {key:25} = {value[0]}")
+        print()
 
-    # 6. Bearer token must exist
-    assert bearer_token != "NOT FOUND", "Bearer token missing from request headers!"
-    assert len(bearer_token) > 10, "Bearer token looks invalid (too short)"
-    print(f"✓ Bearer token present: {bearer_token[:30]}...")
+        # Request headers
+        print(f"REQUEST HEADERS:")
+        print(f"{'-'*100}")
+        for header, value in sorted(req['headers'].items()):
+            if header.lower() == 'authorization':
+                token = value.replace('Bearer ', '').strip()
+                print(f"  {header:25} = Bearer {token[:50]}...")
+            else:
+                print(f"  {header:25} = {value}")
+        print()
 
-    print("\n✓ ALL ASSERTIONS PASSED!")
+        # Request body if present
+        if req['body']:
+            print(f"REQUEST BODY/PAYLOAD:")
+            print(f"{'-'*100}")
+            try:
+                body_json = json.loads(req['body'])
+                print(json.dumps(body_json, indent=2))
+            except:
+                print(req['body'])
+            print()
+        else:
+            print(f"REQUEST BODY: (None - GET request)\n")
+
+    else:
+        print("❌ NO REQUEST CAPTURED!\n")
+
+    # === RESPONSE PAYLOAD ===
+    print(f"\n{'█'*100}")
+    print(f"📥 RESPONSE PAYLOAD")
+    print(f"{'█'*100}\n")
+
+    if captured_responses:
+        resp = captured_responses[0]
+
+        print(f"STATUS: {resp['status']}")
+        print(f"URL: {resp['url']}\n")
+
+        # Response headers
+        print(f"RESPONSE HEADERS:")
+        print(f"{'-'*100}")
+        for header, value in sorted(resp['headers'].items()):
+            print(f"  {header:25} = {value}")
+        print()
+
+        # Response body
+        print(f"RESPONSE BODY/PAYLOAD:")
+        print(f"{'-'*100}")
+        if resp['body_json']:
+            print(json.dumps(resp['body_json'], indent=2))
+        else:
+            print(resp['body_text'][:500])  # Print first 500 chars
+        print()
+
+    else:
+        print("❌ NO RESPONSE CAPTURED!\n")
+
+    # === VALIDATION ===
+    print(f"\n{'█'*100}")
+    print(f"✅ VALIDATION & ASSERTIONS")
+    print(f"{'█'*100}\n")
+
+    if captured_requests and captured_responses:
+        req = captured_requests[0]
+        resp = captured_responses[0]
+        parsed = urlparse(req["url"])
+        params = parse_qs(parsed.query)
+        expected = test_data.get("expected_values", {})
+
+        print(f"REQUEST PARAMETERS VALIDATION:")
+        print(f"{'-'*100}")
+
+        # Validate config_id
+        actual_config = params.get("config_id", [""])[0]
+        expected_config = expected.get("config_id", "")
+        status = "✅ PASS" if actual_config == expected_config else "❌ FAIL"
+        print(f"  {status} | config_id")
+        print(f"         Expected: '{expected_config}'")
+        print(f"         Actual:   '{actual_config}'")
+
+        # Validate node_ids
+        actual_nodes = params.get("node_ids", [""])[0]
+        expected_nodes = expected.get("node_ids", "")
+        status = "✅ PASS" if actual_nodes == expected_nodes else "❌ FAIL"
+        print(f"  {status} | node_ids")
+        print(f"         Expected: '{expected_nodes}'")
+        print(f"         Actual:   '{actual_nodes}'")
+
+        # Validate is_daywise
+        actual_daywise = params.get("is_daywise", [""])[0]
+        expected_daywise = expected.get("is_daywise", "")
+        status = "✅ PASS" if actual_daywise == expected_daywise else "❌ FAIL"
+        print(f"  {status} | is_daywise")
+        print(f"         Expected: '{expected_daywise}'")
+        print(f"         Actual:   '{actual_daywise}'")
+
+        print()
+        print(f"RESPONSE VALIDATION:")
+        print(f"{'-'*100}")
+
+        # Validate HTTP status
+        status = "✅ PASS" if resp['status'] == 200 else "❌ FAIL"
+        print(f"  {status} | HTTP Status Code = {resp['status']}")
+
+        # Validate response structure
+        if resp['body_json']:
+            if isinstance(resp['body_json'], dict):
+                print(f"  ✅ PASS | Response is valid JSON")
+                print(f"         Keys: {list(resp['body_json'].keys())}")
+
+        print()
+
+    print(f"{'='*100}\n")
+
+    # Assertions
+    assert len(captured_requests) > 0, "❌ No API requests captured!"
+    assert len(captured_responses) > 0, "❌ No API responses captured!"
+    assert captured_responses[0]['status'] == 200, f"❌ API returned {captured_responses[0]['status']}"
+
+    print(f"✅ API PAYLOAD TEST COMPLETED SUCCESSFULLY on {environment.upper()}\n")

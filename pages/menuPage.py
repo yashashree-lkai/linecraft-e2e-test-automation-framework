@@ -1,6 +1,5 @@
 """
-pages/menu_page.py — Main Menu page (wks1103/Menu/)
-React Select requires mousedown on the option div, not the label inside it.
+pages/menu_page.py — Hybrid approach: Click if visible, Keyboard fallback for production
 """
 
 from __future__ import annotations
@@ -11,86 +10,79 @@ from pages.base_page import BasePage
 class MenuPage(BasePage):
     URL = "/Menu/"
 
-    @property
-    def company_dropdown_btn(self) -> Locator:
-        return self.page.locator("div.drop-title:has-text('Company Name') ~ div button").first
-
-    @property
-    def plant_dropdown_btn(self) -> Locator:
-        return self.page.locator("div.drop-title:has-text('Plant Name') ~ div button").first
-
-    @property
-    def line_dropdown_btn(self) -> Locator:
-        return self.page.locator("div.drop-title:has-text('Line Name') ~ div button").first
+    def _get_dropdown_button(self, label_index: int) -> Locator:
+        """Get dropdown button by index (0=company, 1=plant, 2=line)"""
+        return self.page.locator("button[class*='dropdownButtonStyle']").nth(label_index)
 
     def _select_dropdown_option(self, btn: Locator, value: str) -> None:
-        """
-        Open React Select dropdown, scroll to option, fire mousedown
-        on the select__option container (React Select listens here).
-        """
+        """Select option using a robust coordinate-free locator strategy"""
+
+        # 1. Focus and click the dropdown button to guarantee menu expansion
+        btn.focus()
         btn.click()
-        self.page.wait_for_timeout(600)
+        self.page.wait_for_timeout(400) # Give the portal overlay time to render
 
-        self.page.locator("div.select__menu-list").first.wait_for(
-            state="visible", timeout=5_000
-        )
+        # 2. Strategy A: Try clicking via strict relative positioning
+        # We look globally for the option text. If multiple exist, we use a loop
+        # to try to find the one that responds to a native click.
+        options = self.page.get_by_text(value, exact=True)
+        count = options.count()
 
-        # Scroll and fire mousedown on select__option (React Select's click target)
-        self.page.evaluate(f"""
-            () => {{
-                const menuList = document.querySelector('div.select__menu-list');
-                if (!menuList) return;
+        success = False
+        for i in range(count):
+            try:
+                opt = options.nth(i)
+                if opt.is_visible():
+                    opt.click(force=True, timeout=1000)
+                    success = True
+                    break
+            except:
+                continue
 
-                for (let scrollTop of [0, 100, 200, 300, 400, 500, 600, 700, 800]) {{
-                    menuList.scrollTop = scrollTop;
+        # 3. Strategy B: KEYBOARD FALLBACK (The Production Lifesaver)
+        # If the click didn't register or could not find a visible text element,
+        # use keyboard navigation down the list item options.
+        if not success:
+            # Type into the focused dropdown container to jump straight to the option text,
+            # or use standard keyboard navigation sequences.
+            # Wait 2 seconds for page to settle
+            self.page.wait_for_timeout(2000)
 
-                    // React Select uses div[class*="option"] as the clickable row
-                    const options = Array.from(menuList.querySelectorAll('[class*="option"]'));
-                    const target = options.find(el => el.textContent.trim() === '{value}');
+            # Wait for dropdown buttons to be present
+            self.page.locator("button[class*='dropdownButtonStyle']").first.wait_for(
+                state="attached", timeout=10_000
+            )
 
-                    if (target) {{
-                        // React Select selects on mousedown
-                        target.dispatchEvent(new MouseEvent('mousedown', {{
-                            bubbles: true, cancelable: true, view: window
-                        }}));
-                        target.dispatchEvent(new MouseEvent('mouseup', {{
-                            bubbles: true, cancelable: true, view: window
-                        }}));
-                        target.dispatchEvent(new MouseEvent('click', {{
-                            bubbles: true, cancelable: true, view: window
-                        }}));
-                        return;
-                    }}
-                }}
-            }}
-        """)
-        self.page.wait_for_timeout(600)
+            self.page.keyboard.press("ArrowDown")
+            self.page.wait_for_timeout(100)
 
-        # Close if still open
-        if self.page.locator("div.select__menu-list").is_visible():
-            self.page.keyboard.press("Escape")
-            self.page.wait_for_timeout(300)
+            # Type the target string to auto-focus the selection via built-in select matching
+            self.page.keyboard.type(value, delay=50)
+            self.page.wait_for_timeout(200)
 
-        self.page.locator("div.select__menu-list").wait_for(
-            state="hidden", timeout=5_000
-        )
-        self.page.wait_for_timeout(400)
+            # Press Enter to finalize selection confirmation
+            self.page.keyboard.press("Enter")
+
+        # 4. Cleanup safety delay to give production a moment to refresh the page layout
+        self.page.wait_for_timeout(500)
 
     def select_company(self, value: str) -> "MenuPage":
-        self._select_dropdown_option(self.company_dropdown_btn, value)
+        btn = self._get_dropdown_button(0)
+        self._select_dropdown_option(btn, value)
         return self
 
     def select_plant(self, value: str) -> "MenuPage":
-        self._select_dropdown_option(self.plant_dropdown_btn, value)
+        btn = self._get_dropdown_button(1)
+        self._select_dropdown_option(btn, value)
         return self
 
     def select_line(self, value: str) -> "MenuPage":
-        self._select_dropdown_option(self.line_dropdown_btn, value)
+        btn = self._get_dropdown_button(2)
+        self._select_dropdown_option(btn, value)
         return self
 
     def select_module(self, module_name: str) -> None:
         self.page.get_by_text(module_name, exact=True).click()
-        self.page.wait_for_load_state("networkidle", timeout=15_000)
 
     def assert_on_menu_page(self) -> "MenuPage":
         expect(self.page).to_have_url(lambda u: "Menu" in u)
